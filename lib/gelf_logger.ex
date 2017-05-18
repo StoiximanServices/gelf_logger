@@ -1,6 +1,6 @@
 defmodule Logger.Backends.Gelf do
   @moduledoc """
-  GELF Logger Backend
+  Gelf Logger Backend
   # GelfLogger [![Build Status](https://travis-ci.org/jschniper/gelf_logger.svg?branch=master)](https://travis-ci.org/jschniper/gelf_logger)
 
   A logger backend that will generate Graylog Extended Log Format messages. The
@@ -61,6 +61,7 @@ defmodule Logger.Backends.Gelf do
 
   use GenEvent
 
+  @gelf_spec_version "1.1"
   @max_size 1047040
   @max_packet_size 8192
   @max_payload_size 8180
@@ -85,7 +86,7 @@ defmodule Logger.Backends.Gelf do
 
   def handle_event({level, _gl, {Logger, msg, ts, md}}, %{level: min_level} = state) do
     if is_nil(min_level) or Logger.compare_levels(level, min_level) != :lt do
-      log_event(level, msg, ts, md, state)
+      log_event(level, to_string(msg), ts, md, state)
     end
     {:ok, state}
   end
@@ -96,12 +97,10 @@ defmodule Logger.Backends.Gelf do
     config = Keyword.merge(Application.get_env(:logger, name, []), options)
     Application.put_env(:logger, name, config)
 
-    {:ok, socket} = :gen_udp.open(0)
-
+    {:ok, socket} = :gen_udp.open(0, [:binary, {:active, false}])
     {:ok, hostname} = :inet.gethostname
 
-    hostname = Keyword.get(config, :hostname, hostname)
-
+    hostname        = Keyword.get(config, :hostname, hostname)
     gl_host         = Keyword.get(config, :host) |> to_char_list
     port            = Keyword.get(config, :port)
     application     = Keyword.get(config, :application)
@@ -110,73 +109,39 @@ defmodule Logger.Backends.Gelf do
     compression     = Keyword.get(config, :compression, :gzip)
     tags            = Keyword.get(config, :tags, [])
 
-    port = 
-      cond do
-        is_binary(port) ->
-          {val, ""} = Integer.parse(to_string(port))
-          
-          val
-        true ->
-          port
-      end
-
-    %{name: name, gl_host: gl_host, host: to_string(hostname), port: port, metadata: metadata, level: level, application: application, socket: socket, compression: compression, tags: tags}
+    %{name: name, gl_host: gl_host, host: to_string(hostname), port: parse_port(port), metadata: metadata, level: level, application: application, socket: socket, compression: compression, tags: tags}
   end
 
-  defp log_event(level, msg, ts, md, state) do
-    int_level =
-      case level do
-        :debug -> 7
-        :info  -> 6
-        :warn  -> 4
-        :error -> 3
-      end
+  defp log_event(level, msg, ts, md, %{host: host, application: application, compression: compression} = state) do
+    %{
+      short_message: String.slice(msg, 0..79),
+      version:       @gelf_spec_version,
+      host:          host,
+      level:         level_to_int(level),
+      timestamp:     format_timestamp(ts),
+      _facility:     application
+    }
+    |> full_message(msg)
+    |> additional_fields(md, state)
+    |> Poison.encode!()
+    |> compress(compression)
+    |> send_to_graylog(state)
+  end
 
-    fields =
-      md
-      |> Keyword.take(state[:metadata])
-      |> Keyword.merge(state[:tags])
-      |> Map.new(fn({k,v}) -> {"_#{k}", to_string(v)} end)
+  defp send_to_graylog(data, state), do: do_send(data, byte_size(data), state)
 
-    {{year, month, day}, {hour, min, sec, milli}} = ts
+  defp do_send(_data, size, _state) when size > @max_size do
+    raise ArgumentError, message: "message too large"
+  end
+  defp do_send(data, size, %{socket: socket, gl_host: gl_host, port: port}) when size > @max_packet_size do
+    num = div(size, @max_packet_size)
+    num = if (num * @max_packet_size) < size, do: num + 1, else: num
+    id = :crypto.strong_rand_bytes(8)
 
-    epoch_seconds = :calendar.datetime_to_gregorian_seconds({{year, month, day}, {hour, min, sec}}) - @epoch
-
-    {timestamp, _remainder} = "#{epoch_seconds}.#{milli}" |> Float.parse
-
-    gelf = %{
-      short_message:  String.slice(to_string(msg), 0..79),
-      long_message:   to_string(msg),
-      version:        "1.1",
-      host:           state[:host],
-      level:          int_level,
-      timestamp:      Float.round(timestamp, 3),
-      _application:   state[:application]
-    } |> Map.merge(fields)
-
-    data = Poison.encode!(gelf) |> compress(state[:compression])
-
-    size = byte_size(data)
-
-    cond do
-      size > @max_size ->
-        raise ArgumentError, message: "Message too large"
-      size > @max_packet_size ->
-        num = div(size, @max_packet_size)
-
-        num =
-          if (num * @max_packet_size) < size do
-            num + 1
-          else
-            num
-          end
-
-        id = :crypto.strong_rand_bytes(8)
-
-        send_chunks(state[:socket], state[:gl_host], state[:port], data, id, :binary.encode_unsigned(num), 0, size)
-      true ->
-        :gen_udp.send(state[:socket], state[:gl_host], state[:port], data)
-    end
+    send_chunks(socket, gl_host, port, data, id, :binary.encode_unsigned(num), 0, size)
+  end
+  defp do_send(data, _size, %{socket: socket, gl_host: gl_host, port: port}) do
+    :gen_udp.send(socket, gl_host, port, data)
   end
 
   defp send_chunks(socket, host, port, data, id, num, seq, size) when size > @max_payload_size do
@@ -197,14 +162,40 @@ defmodule Logger.Backends.Gelf do
     << 0x1e, 0x0f, id :: binary - size(8), bin :: binary - size(1), num :: binary - size(1), payload :: binary >>
   end
 
-  defp compress(data, type) do
-    case type do
-      :gzip ->
-        :zlib.gzip(data)
-      :zlib ->
-        :zlib.compress(data)
-      _ ->
-        data
-    end
+  defp parse_port(port) when is_binary(port) do
+    {val, ""} = Integer.parse(to_string(port))
+    val
   end
+  defp parse_port(port), do: port
+
+  defp additional_fields(data, metadata, %{metadata: metadata_fields, tags: tags}) do
+    fields =
+      metadata
+      |> Keyword.take(metadata_fields)
+      |> Keyword.merge(tags)
+      |> Map.new(fn({k,v}) -> {"_#{k}", to_string(v)} end)
+      |> Map.drop(["_id"]) # http://docs.graylog.org/en/2.2/pages/gelf.html "Libraries SHOULD not allow to send id as additional field (_id). Graylog server nodes omit this field automatically."
+    Map.merge(data, fields)
+  end
+
+  defp full_message(data, msg) when byte_size(msg) > 80, do: Map.put(data, :full_message, msg)
+  defp full_message(data, _msg), do: data
+
+  defp compress(data, :gzip), do: :zlib.gzip(data)
+  defp compress(data, :zlib), do: :zlib.compress(data)
+  defp compress(data, _),     do: data
+
+  defp format_timestamp({{year, month, day}, {hour, min, sec, milli}}) do
+    {{year, month, day}, {hour, min, sec}}
+      |> :calendar.datetime_to_gregorian_seconds()
+      |> Kernel.-(@epoch)
+      |> Kernel.+(milli / 1000)
+      |> Float.round(3)
+  end
+
+  defp level_to_int(:debug), do: 7
+  defp level_to_int(:info),  do: 6
+  defp level_to_int(:warn),  do: 4
+  defp level_to_int(:error), do: 3
+
 end

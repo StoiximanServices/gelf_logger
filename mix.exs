@@ -2,37 +2,36 @@ defmodule GelfLogger.Mixfile do
   use Mix.Project
 
   def project do
-    [app: :gelf_logger,
-     version: "0.7.2",
-     elixir: "~> 1.2",
-     build_embedded: Mix.env == :prod,
-     start_permanent: Mix.env == :prod,
-     deps: deps(),
-     description: description(),
-     package: package(),
+    [
+      app: :gelf_logger,
+      version: "0.7.2",
+      elixir: "~> 1.7",
+      build_embedded: Mix.env() == :prod,
+      start_permanent: Mix.env() == :prod,
+      deps: deps(),
+      description: description(),
+      package: package(),
 
-     # Docs
-     name: "GELF Logger",
-     source_url: "https://github.com/jschniper/gelf_logger",
-     docs: [
-       main: "Logger.Backends.Gelf",
-       extras: ["README.md"]
-     ]
-   ]
+      # Docs
+      name: "GELF Logger",
+      source_url: "https://github.com/jschniper/gelf_logger",
+      docs: [
+        main: "Logger.Backends.Gelf",
+        extras: ["README.md"]
+      ]
+    ]
   end
 
-  # Configuration for the OTP application
-  #
-  # Type "mix help compile.app" for more information
   def application do
-    [applications: [:logger]]
+    [applications: [:logger, :amqp]]
   end
 
   defp deps do
-   [
-     {:poison, ">= 1.0.0"},
-     {:ex_doc, "~> 0.14", only: :dev}
-   ]
+    [
+      {:amqp, "~> 1.1"},
+      {:ex_doc, "~> 0.19.3", only: :dev, runtime: false},
+      {:poison, github: "StoiximanServices/poison"}
+    ]
   end
 
   defp description do
@@ -44,10 +43,10 @@ defmodule GelfLogger.Mixfile do
 
   defp package do
     [
-      files: ["lib", "mix.exs", "README*", "LICENSE" ],
+      files: ["lib", "mix.exs", "README*", "LICENSE"],
       maintainers: ["Joshua Schniper"],
       licenses: ["MIT"],
-      links: %{"Github": "https://github.com/jschniper/gelf_logger"}
+      links: %{Github: "https://github.com/jschniper/gelf_logger"}
     ]
   end
 end

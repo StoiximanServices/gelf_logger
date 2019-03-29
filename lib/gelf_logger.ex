@@ -62,7 +62,7 @@ defmodule Logger.Backends.Gelf do
   use GenEvent
 
   @gelf_spec_version "1.1"
-  @max_size 1047040
+  @max_size 1_047_040
   @max_packet_size 8192
   @max_payload_size 8180
   @epoch :calendar.datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
@@ -98,28 +98,45 @@ defmodule Logger.Backends.Gelf do
     Application.put_env(:logger, name, config)
 
     {:ok, socket} = :gen_udp.open(0, [:binary, {:active, false}])
-    {:ok, hostname} = :inet.gethostname
+    {:ok, hostname} = :inet.gethostname()
 
-    hostname        = Keyword.get(config, :hostname, hostname)
-    gl_host         = Keyword.get(config, :host) |> to_char_list
-    port            = Keyword.get(config, :port)
-    application     = Keyword.get(config, :application)
-    level           = Keyword.get(config, :level)
-    metadata        = Keyword.get(config, :metadata, [])
-    compression     = Keyword.get(config, :compression, :gzip)
-    tags            = Keyword.get(config, :tags, [])
+    hostname = Keyword.get(config, :hostname, hostname)
+    gl_host = config |> Keyword.get(:host) |> to_charlist
+    port = Keyword.get(config, :port)
+    application = Keyword.get(config, :application)
+    level = Keyword.get(config, :level)
+    metadata = Keyword.get(config, :metadata, [])
+    compression = Keyword.get(config, :compression, :gzip)
+    tags = Keyword.get(config, :tags, [])
 
-    %{name: name, gl_host: gl_host, host: to_string(hostname), port: parse_port(port), metadata: metadata, level: level, application: application, socket: socket, compression: compression, tags: tags}
+    %{
+      name: name,
+      gl_host: gl_host,
+      host: to_string(hostname),
+      port: parse_port(port),
+      metadata: metadata,
+      level: level,
+      application: application,
+      socket: socket,
+      compression: compression,
+      tags: tags
+    }
   end
 
-  defp log_event(level, msg, ts, md, %{host: host, application: application, compression: compression} = state) do
+  defp log_event(
+         level,
+         msg,
+         ts,
+         md,
+         %{host: host, application: application, compression: compression} = state
+       ) do
     %{
       short_message: String.slice(msg, 0..79),
-      version:       @gelf_spec_version,
-      host:          host,
-      level:         level_to_int(level),
-      timestamp:     format_timestamp(ts),
-      _facility:     application
+      version: @gelf_spec_version,
+      host: host,
+      level: level_to_int(level),
+      timestamp: format_timestamp(ts),
+      _facility: application
     }
     |> full_message(msg)
     |> additional_fields(md, state)
@@ -133,19 +150,22 @@ defmodule Logger.Backends.Gelf do
   defp do_send(_data, size, _state) when size > @max_size do
     raise ArgumentError, message: "message too large"
   end
-  defp do_send(data, size, %{socket: socket, gl_host: gl_host, port: port}) when size > @max_packet_size do
+
+  defp do_send(data, size, %{socket: socket, gl_host: gl_host, port: port})
+       when size > @max_packet_size do
     num = div(size, @max_packet_size)
-    num = if (num * @max_packet_size) < size, do: num + 1, else: num
+    num = if num * @max_packet_size < size, do: num + 1, else: num
     id = :crypto.strong_rand_bytes(8)
 
     send_chunks(socket, gl_host, port, data, id, :binary.encode_unsigned(num), 0, size)
   end
+
   defp do_send(data, _size, %{socket: socket, gl_host: gl_host, port: port}) do
     :gen_udp.send(socket, gl_host, port, data)
   end
 
   defp send_chunks(socket, host, port, data, id, num, seq, size) when size > @max_payload_size do
-    <<payload :: binary - size(@max_payload_size), rest :: binary >> = data
+    <<payload::binary-size(@max_payload_size), rest::binary>> = data
 
     :gen_udp.send(socket, host, port, make_chunk(payload, id, num, seq))
 
@@ -159,13 +179,14 @@ defmodule Logger.Backends.Gelf do
   defp make_chunk(payload, id, num, seq) do
     bin = :binary.encode_unsigned(seq)
 
-    << 0x1e, 0x0f, id :: binary - size(8), bin :: binary - size(1), num :: binary - size(1), payload :: binary >>
+    <<0x1E, 0x0F, id::binary-size(8), bin::binary-size(1), num::binary-size(1), payload::binary>>
   end
 
   defp parse_port(port) when is_binary(port) do
     {val, ""} = Integer.parse(to_string(port))
     val
   end
+
   defp parse_port(port), do: port
 
   defp additional_fields(data, metadata, %{metadata: metadata_fields, tags: tags}) do
@@ -173,8 +194,9 @@ defmodule Logger.Backends.Gelf do
       metadata
       |> Keyword.take(metadata_fields)
       |> Keyword.merge(tags)
-      |> Map.new(fn({k,v}) -> {"_#{k}", to_string(v)} end)
-      |> Map.drop(["_id"]) # http://docs.graylog.org/en/2.2/pages/gelf.html "Libraries SHOULD not allow to send id as additional field (_id). Graylog server nodes omit this field automatically."
+      |> Map.new(fn {k, v} -> {"_#{k}", to_string(v)} end)
+      |> Map.drop(["_id"])
+
     Map.merge(data, fields)
   end
 
@@ -183,19 +205,18 @@ defmodule Logger.Backends.Gelf do
 
   defp compress(data, :gzip), do: :zlib.gzip(data)
   defp compress(data, :zlib), do: :zlib.compress(data)
-  defp compress(data, _),     do: data
+  defp compress(data, _), do: data
 
   defp format_timestamp({{year, month, day}, {hour, min, sec, milli}}) do
     {{year, month, day}, {hour, min, sec}}
-      |> :calendar.datetime_to_gregorian_seconds()
-      |> Kernel.-(@epoch)
-      |> Kernel.+(milli / 1000)
-      |> Float.round(3)
+    |> :calendar.datetime_to_gregorian_seconds()
+    |> Kernel.-(@epoch)
+    |> Kernel.+(milli / 1000)
+    |> Float.round(3)
   end
 
   defp level_to_int(:debug), do: 7
-  defp level_to_int(:info),  do: 6
-  defp level_to_int(:warn),  do: 4
+  defp level_to_int(:info), do: 6
+  defp level_to_int(:warn), do: 4
   defp level_to_int(:error), do: 3
-
 end

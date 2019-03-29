@@ -7,18 +7,18 @@ defmodule GelfLoggerTest do
   Logger.add_backend({Logger.Backends.Gelf, :gelf_logger})
 
   setup do
-    {:ok, socket} = :gen_udp.open(12201, [:binary, {:active, false}])
+    {:ok, socket} = :gen_udp.open(12_201, [:binary, {:active, false}])
 
     {:ok, [socket: socket]}
   end
 
   test "sends a message via udp", context do
-    Logger.info "test"
+    Logger.info("test")
 
     {:ok, {address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
     # Should be coming from localhost
-    assert address == {127,0,0,1}
+    assert address == {127, 0, 0, 1}
 
     map = process_packet(packet)
 
@@ -31,12 +31,15 @@ defmodule GelfLoggerTest do
   test "convert port from binary to integer", context do
     Logger.remove_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Application.put_env(:logger, :gelf_logger,
-      Application.get_env(:logger, :gelf_logger) |> Keyword.put(:port, "12201"))
+    Application.put_env(
+      :logger,
+      :gelf_logger,
+      Application.get_env(:logger, :gelf_logger) |> Keyword.put(:port, "12201")
+    )
 
     Logger.add_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Logger.info "test"
+    Logger.info("test")
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
@@ -51,12 +54,15 @@ defmodule GelfLoggerTest do
   test "configurable source (host)", context do
     Logger.remove_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Application.put_env(:logger, :gelf_logger,
-      Application.get_env(:logger, :gelf_logger) |> Keyword.put(:hostname, 'host-dev-1'))
+    Application.put_env(
+      :logger,
+      :gelf_logger,
+      Application.get_env(:logger, :gelf_logger) |> Keyword.put(:hostname, 'host-dev-1')
+    )
 
     Logger.add_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Logger.info "test"
+    Logger.info("test")
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
@@ -68,12 +74,15 @@ defmodule GelfLoggerTest do
   test "configurable tags", context do
     Logger.remove_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Application.put_env(:logger, :gelf_logger,
-      Application.get_env(:logger, :gelf_logger) |> Keyword.put(:tags, [foo: "bar", baz: "qux"]))
+    Application.put_env(
+      :logger,
+      :gelf_logger,
+      Application.get_env(:logger, :gelf_logger) |> Keyword.put(:tags, foo: "bar", baz: "qux")
+    )
 
     Logger.add_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Logger.info "test"
+    Logger.info("test")
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
@@ -84,11 +93,13 @@ defmodule GelfLoggerTest do
   end
 
   test "short message should cap at 80 characters", context do
-    Logger.info "This is a test string that is over eighty characters but only because I kept typing garbage long after I had run out of things to say"
+    Logger.info(
+      "This is a test string that is over eighty characters but only because I kept typing garbage long after I had run out of things to say"
+    )
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
-     map = process_packet(packet)
+    map = process_packet(packet)
 
     assert map["short_message"] != map["full_message"]
     assert String.length(map["short_message"]) <= 80
@@ -96,7 +107,7 @@ defmodule GelfLoggerTest do
 
   test "log levels are being set correctly", context do
     # DEBUG
-    Logger.debug "debug"
+    Logger.debug("debug")
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
@@ -105,7 +116,7 @@ defmodule GelfLoggerTest do
     assert map["level"] == 7
 
     # INFO
-    Logger.info "info"
+    Logger.info("info")
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
@@ -114,7 +125,7 @@ defmodule GelfLoggerTest do
     assert map["level"] == 6
 
     # WARN
-    Logger.warn "warn"
+    Logger.warn("warn")
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
@@ -123,7 +134,7 @@ defmodule GelfLoggerTest do
     assert map["level"] == 4
 
     # ERROR
-    Logger.error "error"
+    Logger.error("error")
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
@@ -143,16 +154,19 @@ defmodule GelfLoggerTest do
     # First for gzip
     Logger.remove_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Application.put_env(:logger, :gelf_logger,
-    Application.get_env(:logger, :gelf_logger) |> Keyword.put(:compression, :gzip))
+    Application.put_env(
+      :logger,
+      :gelf_logger,
+      Application.get_env(:logger, :gelf_logger) |> Keyword.put(:compression, :gzip)
+    )
 
     Logger.add_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Logger.info "test gzip"
+    Logger.info("test gzip")
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
-    {:error, _ } = Poison.decode(packet)
+    {:error, _} = Poison.decode(packet)
 
     map = process_packet(packet)
 
@@ -161,16 +175,19 @@ defmodule GelfLoggerTest do
     # Now, for zlib
     Logger.remove_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Application.put_env(:logger, :gelf_logger,
-    Application.get_env(:logger, :gelf_logger) |> Keyword.put(:compression, :zlib))
+    Application.put_env(
+      :logger,
+      :gelf_logger,
+      Application.get_env(:logger, :gelf_logger) |> Keyword.put(:compression, :zlib)
+    )
 
     Logger.add_backend({Logger.Backends.Gelf, :gelf_logger})
 
-    Logger.info "test zlib"
+    Logger.info("test zlib")
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(context[:socket], 0, 2000)
 
-    {:error, _ } = Poison.decode(packet)
+    {:error, _} = Poison.decode(packet)
 
     map = process_packet(packet)
 
@@ -180,13 +197,14 @@ defmodule GelfLoggerTest do
   defp process_packet(packet) do
     compression = Application.get_env(:logger, :gelf_logger)[:compression]
 
-    data = case compression do
-      :gzip -> :zlib.gunzip(packet)
-      :zlib -> :zlib.uncompress(packet)
-      _ -> packet
-    end
+    data =
+      case compression do
+        :gzip -> :zlib.gunzip(packet)
+        :zlib -> :zlib.uncompress(packet)
+        _ -> packet
+      end
 
-    {:ok,  map} = Poison.decode(data |> to_string)
+    {:ok, map} = Poison.decode(data |> to_string)
 
     map
   end
